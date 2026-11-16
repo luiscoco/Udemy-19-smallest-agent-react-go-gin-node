@@ -1,0 +1,20 @@
+import {mkdirSync,writeFileSync,existsSync} from 'node:fs';
+import {resolve} from 'node:path';
+import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
+import {root,goCommand,localGo} from './go-tool.mjs';
+if(goCommand()){console.log('A compatible Go toolchain is available.');process.exit(0);}
+const version='go1.27.3';const os={win32:'windows',linux:'linux',darwin:'darwin'}[process.platform];const arch={x64:'amd64',arm64:'arm64'}[process.arch];
+if(!os||!arch)throw Error('Install a supported Go 1.27 toolchain manually.');
+const metadata=await(await fetch('https://go.dev/dl/?mode=json&include=all')).json();
+const file=metadata.find(release=>release.version===version)?.files.find(file=>file.os===os&&file.arch===arch&&file.kind==='archive');
+if(!file)throw Error('Official Go archive metadata was not found.');
+console.log(`Downloading official ${file.filename} into this edition’s .tools directory.`);
+const response=await fetch('https://go.dev/dl/'+file.filename);if(!response.ok)throw Error('Go archive download failed.');
+const bytes=Buffer.from(await response.arrayBuffer());
+if(createHash('sha256').update(bytes).digest('hex')!==file.sha256)throw Error('Go archive checksum mismatch.');
+const tools=resolve(root,'.tools');mkdirSync(tools,{recursive:true});const archive=resolve(tools,file.filename);writeFileSync(archive,bytes);
+execFileSync('tar',['-xf',archive,'-C',tools],{stdio:'inherit'});
+if(!existsSync(localGo))throw Error('Go extraction did not produce the toolchain.');
+writeFileSync(resolve(tools,'go/.lesson19-ready'),version);
+console.log('Project-local Go installed with its official SHA-256 verified.');

@@ -1,0 +1,15 @@
+import {createServer} from 'node:http';
+import {loadEnvironment} from './environment.js';
+import {readConfig} from './config.js';
+import {createAgentService} from './agent-service.js';
+import {createHandlers} from './handlers.js';
+import {createInternalHandler} from './transport.js';
+const env=loadEnvironment();
+const config=readConfig(env);
+const token=env.AGENT_SERVICE_TOKEN||'';
+if(token.length<32||token.startsWith('replace-'))throw Error('Run npm run setup to configure a private agent-service token.');
+const {handle,abortAll}=createInternalHandler(config,createAgentService(config),token);
+const server=createServer(handle);
+server.requestTimeout=200000;
+server.listen(Number(env.AGENT_PORT||9401),env.AGENT_HOST||'127.0.0.1',()=>console.log('Node agent service ready'));
+for(const signal of ['SIGINT','SIGTERM'])process.on(signal,()=>{abortAll();server.close(()=>process.exit(0));setTimeout(()=>process.exit(1),8000).unref();});

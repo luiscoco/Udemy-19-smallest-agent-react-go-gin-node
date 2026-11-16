@@ -1,0 +1,28 @@
+services:
+  agent:
+    build:
+      context: .
+      dockerfile: agent-service/Dockerfile
+    env_file: agent-service/.env
+    environment:
+      AGENT_HOST: 0.0.0.0
+      AGENT_PORT: '9401'
+    expose: ['9401']
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:9401/internal/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  gateway:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file: backend/.env
+    environment:
+      API_HOST: 0.0.0.0
+      API_PORT: '9400'
+      AGENT_SERVICE_URL: http://agent:9401
+    ports: ['127.0.0.1:9400:9400']
+    depends_on:
+      agent:
+        condition: service_healthy

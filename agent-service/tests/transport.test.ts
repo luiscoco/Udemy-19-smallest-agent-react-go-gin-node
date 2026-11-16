@@ -1,0 +1,14 @@
+import {describe,it,expect,vi,afterEach} from 'vitest';
+import {createServer,type Server} from 'node:http';
+import type {AddressInfo} from 'node:net';
+import {createInternalHandler} from '../src/transport';
+import {readConfig} from '../src/config';
+const token='test-service-token-0123456789-abcdefghijklmnopqrstuvwxyz';
+let server:Server|undefined;
+afterEach(async()=>{server?.closeAllConnections();if(server)await new Promise<void>(resolve=>server!.close(()=>resolve()));server=undefined;});
+async function start(agent:any){const internal=createInternalHandler(readConfig({ANTHROPIC_API_KEY:'test-model-key'}),agent,token);server=createServer(internal.handle);await new Promise<void>(resolve=>server!.listen(0,'127.0.0.1',resolve));return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;}
+describe('private Node agent transport',()=>{
+ it('requires the exact service token before inference',async()=>{const agent={runAgent:vi.fn(),streamAgent:vi.fn()};const base=await start(agent);for(const supplied of ['', 'wrong-token']){const r=await fetch(base+'/api/agent/query',{method:'POST',headers:{'Content-Type':'application/json','X-Agent-Service-Token':supplied},body:'{"prompt":"hello"}'});expect(r.status).toBe(401);await r.text();}expect(agent.runAgent).not.toHaveBeenCalled();expect((await fetch(base+'/internal/ready')).status).toBe(200);expect((await fetch(base+'/api/health')).status).toBe(401);});
+ it('streams safe events and closes SDK work when the gateway disconnects',async()=>{let cancelled=false;const agent={runAgent:vi.fn(),async *streamAgent(_prompt:string,controller?:AbortController){yield {type:'SystemMessage',summary:'Ready',data:{}};await new Promise<void>(resolve=>controller!.signal.addEventListener('abort',()=>{cancelled=true;resolve();},{once:true}));}};const base=await start(agent);const abort=new AbortController();const r=await fetch(base+'/api/agent/stream',{method:'POST',headers:{'Content-Type':'application/json','X-Agent-Service-Token':token},body:'{"prompt":"hello"}',signal:abort.signal});await r.body!.getReader().read();abort.abort();await vi.waitFor(()=>expect(cancelled).toBe(true));});
+ it('rejects oversized requests without corrupting later keep-alive requests',async()=>{const agent={runAgent:vi.fn(async()=>({result:'hello',num_turns:1,duration_ms:1,total_cost_usd:null,is_error:false})),streamAgent:vi.fn()};const base=await start(agent);for(let i=0;i<3;i++){const large=await fetch(base+'/api/agent/query',{method:'POST',headers:{'Content-Type':'application/json','X-Agent-Service-Token':token},body:JSON.stringify({prompt:'x'.repeat(40000)})});expect(large.status).toBe(413);await large.text();const valid=await fetch(base+'/api/agent/query',{method:'POST',headers:{'Content-Type':'application/json','X-Agent-Service-Token':token},body:'{"prompt":"hello"}'});expect(valid.status).toBe(200);await valid.text();}});
+});
